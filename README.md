@@ -93,6 +93,130 @@ gateways require `GROK_BOT_ALLOW_LOCAL_GATEWAY=1`.
 | `maxResponseBytes` | `2097152` | Maximum buffered gateway response size. |
 | `defaultThreadLimit` | `40` | Default trailing-entry count for `grok_thread` (1-200). |
 
+## Usage
+
+Use the tools directly; the plugin does not expose a subagent or block waiting for replies.
+
+### Treat Grok Bot as a digital employee
+
+Grok Bot is **not** a local coding agent such as Codex or Claude Code launched inside DSH.
+Those agents run against the workspace on the current computer. Grok Bot works on its own
+cloud workstation: it cannot see or modify files on your local machine, and it normally
+cannot reach a service bound to DSH's `localhost`.
+
+Treat it as a real employee and give it a self-contained assignment. Do not ask it to edit
+files in the local working tree; there is no shared filesystem. State the goal, repository,
+branch, base SHA, scope, design references, constraints, and acceptance checks. Use Git as
+the shared workspace and handoff protocol: push a branch and task brief, let the employee
+work from them, then fetch its branch, review and test it in DSH, and merge it from DSH or
+CI.
+
+The exchange is asynchronous. `grok_send` only delivers the assignment; it does not wait
+for the work to finish. Continue other DSH work and read the thread later.
+
+### Recommended workflow
+
+The same loop applies to research, coding, and web page work:
+
+1. Create and push a dedicated branch named `grok/<task-id>`. Add a short task file with the
+   base SHA, scope, design references, acceptance commands, and constraints.
+2. Call `grok_targets` to resolve the bot, then call `grok_thread` once and keep its `cursor`.
+3. Call `grok_send` once with the task ID, repo, branch, base SHA, and task-file path or link.
+   Ask for a final reply with `STATUS`, `BRANCH`, `COMMIT`, `TESTS`, `SCREENSHOTS`, and
+   `BLOCKERS`. Do not wait in the tool call.
+4. Continue other DSH work. Poll with `grok_thread` using the saved `after` cursor and
+   `full: true`.
+5. Fetch the returned branch into a separate worktree. Run build/tests and inspect
+   screenshots or a preview URL. Send review comments against the same branch and commit.
+6. Merge and deploy only from DSH or CI.
+
+Keep one task to one branch and one main writer. Grok Bot's browser and terminal run on its
+cloud computer, so a DSH-local `localhost` URL is normally unreachable; use a preview
+deployment or screenshots. Never send secrets. Grok approval requests stay in the Grok UI;
+this plugin does not answer them.
+
+### Example: delegate a web page task
+
+First resolve the bot:
+
+```json
+{ "kind": "bot", "query": "web-worker" }
+```
+
+Pass those arguments to `grok_targets`. If the name is ambiguous, use the target's `id`
+instead of its name. Then read the current thread tail to capture a starting cursor:
+
+```json
+{ "target": "web-worker", "limit": 20 }
+```
+
+Pass those arguments to `grok_thread` and keep the `cursor` from the response.
+
+Send the assignment once. The `message` should be self-contained because the bot cannot
+inspect your DSH session or local files:
+
+```text
+You are the implementer for task GROK-123 on your own cloud workstation.
+
+Repository: https://github.com/acme/web.git
+Branch: grok/GROK-123
+Base SHA: 4f2c1a9
+Task brief: docs/tasks/GROK-123.md (already on the branch)
+Goal: Fix the mobile navigation regression described in the task brief.
+
+Acceptance:
+- npm test
+- npm run build
+- Verify the fix at the preview URL in the task brief.
+
+Constraints:
+- Work only on the named branch and commit there.
+- Do not deploy or merge.
+- Do not assume access to the DSH machine or its localhost.
+- Never include secrets in commits, replies, screenshots, or URLs.
+
+Push the branch when done. Reply with exactly:
+STATUS: done | blocked | failed
+BRANCH: ...
+COMMIT: ...
+TESTS: ...
+SCREENSHOTS: ...
+BLOCKERS: ...
+```
+
+Pass that text as `message` to `grok_send`, with the same resolved target:
+
+```json
+{
+  "target": "web-worker",
+  "message": "<task brief above>"
+}
+```
+
+`delivery: "accepted"` means the message was submitted; it does not mean the work is done.
+If delivery is `unknown`, read the thread before resending.
+
+Continue other DSH work, then poll with the saved cursor:
+
+```json
+{
+  "target": "web-worker",
+  "after": "<cursor from the previous grok_thread response>",
+  "full": true
+}
+```
+
+Pass these arguments to `grok_thread`. Save the new `cursor` from each response and use it
+as `after` on the next call; entries already seen will not be returned again.
+`entryCount: 0` means there is nothing new. `gapReset: true` means the cursor expired, so
+treat the returned entries as a fresh snapshot. Poll periodically (for example, every
+1–5 minutes) or after finishing your current DSH task. Stop when the thread contains a
+reply with `STATUS: done`, `STATUS: blocked`, or `STATUS: failed`.
+
+If the bot asks a question, answer with `grok_send` and set `replyTo` to the relevant entry
+id from `grok_thread`. When the status is `done`, fetch `BRANCH` and `COMMIT` and continue
+with review and tests in DSH.
+
 ## Tool behavior
 
 ### `grok_targets`
