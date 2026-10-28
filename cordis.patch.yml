@@ -1,0 +1,10 @@
+# Installable DSH bundle patch for dsh-plugin-grok-bot.
+# The plugin registers its tools through ctx.tools and adds no host services.
+- insert:
+    - id: tool-grok-bot
+      name: 'dsh-plugin-grok-bot'
+      config:
+        appSession: true
+        requestTimeoutMs: 30000
+        maxResponseBytes: 2097152
+        defaultThreadLimit: 40

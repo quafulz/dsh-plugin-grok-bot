@@ -1,0 +1,12 @@
+dsh-plugin-grok-bot
+===================
+
+This project contains code adapted from grok-bot-cli:
+https://github.com/ScriptedAlchemy/grok-bot-cli
+
+grok-bot-cli is licensed under the MIT License:
+Copyright (c) 2026 ScriptedAlchemy
+
+The Grok Bot desktop session reader, gateway client, URL policy, and transcript
+cursor semantics in src/grok/ are derived from grok-bot-cli and have been
+rewritten for use as a native DeepSeek Harness tool plugin.
