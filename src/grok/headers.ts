@@ -49,7 +49,9 @@ export function requestHeaders(session: {
 }): Record<string, string> {
   return {
     'content-type': 'application/json',
-    authorization: `Bearer ${session.gatewayToken}`,
+    ...(session.gatewayToken
+      ? { authorization: `Bearer ${session.gatewayToken}` }
+      : {}),
     ...session.gatewayHeaders,
   }
 }
@@ -58,13 +60,27 @@ export function requestHeaders(session: {
 export function ensureSandboxHeaders(
   accessToken: string,
   env: NodeJS.ProcessEnv = process.env,
+  clientVersion?: string,
+  platform: NodeJS.Platform = process.platform,
 ): Record<string, string> {
+  const version = (clientVersion ?? env.SAND_CLIENT_VERSION ?? '0.77.0').trim()
+  const clientOs = platform === 'win32'
+    ? 'win32'
+    : platform === 'linux' ? 'linux' : 'darwin'
+  const userAgentOs = clientOs === 'darwin'
+    ? '(Macintosh; Intel Mac OS X 10_15_7)'
+    : clientOs === 'win32'
+      ? '(Windows NT 10.0; Win64; x64)'
+      : '(X11; Linux x86_64)'
   return {
     'content-type': 'application/json',
     'connect-protocol-version': '1',
     authorization: `Bearer ${accessToken}`,
     'x-cursor-client-type': 'sand',
-    'x-cursor-client-version': env.SAND_CLIENT_VERSION ?? '0.20.0',
+    'x-cursor-client-version': version,
+    'x-cursor-client-os': clientOs,
+    'x-cursor-client-source': 'sand-desktop',
     'x-sand-box-namespace': env.SAND_BOX_NAMESPACE ?? 'prod',
+    'user-agent': `Mozilla/5.0 ${userAgentOs} AppleWebKit/537.36 (KHTML, like Gecko) Sand/${version} Safari/537.36`,
   }
 }

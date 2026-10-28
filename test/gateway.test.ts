@@ -144,6 +144,28 @@ test('connectGateway can use an injected desktop session', async () => {
   assert.equal(session.gatewayToken, 'app-token')
 })
 
+test('connectGateway mints a session from the desktop access token', async () => {
+  const { fetchImpl, calls } = fakeFetch(() => jsonResponse({
+    gatewayUrl: 'https://gateway.cursor.sh/',
+    gatewayToken: 'minted-token',
+    networkToken: 'network-token',
+  }))
+  const session = await connectGateway({
+    env: {},
+    appSession: true,
+    loadSession: () => null,
+    loadAccessToken: () => 'desktop-access-token',
+    appVersion: '0.77.0',
+    fetchImpl,
+  })
+  assert.equal(session.gatewayToken, 'minted-token')
+  assert.equal(session.gatewayHeaders['x-anyrun-network-token'], 'network-token')
+  assert.equal(calls[0]?.url, 'https://api2.cursor.sh/aiserver.v1.GrokBotService/EnsureSandBox')
+  assert.equal(calls[0]?.headers.authorization, 'Bearer desktop-access-token')
+  assert.equal(calls[0]?.headers['x-cursor-client-version'], '0.77.0')
+  assert.equal(calls[0]?.headers['x-cursor-client-type'], 'sand')
+})
+
 test('connectGateway fails loudly when no auth source exists', async () => {
   await assert.rejects(
     () => connectGateway({ env: {}, appSession: false }),

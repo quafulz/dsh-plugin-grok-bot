@@ -2,7 +2,7 @@ import z from '@deepseek-ai/schemastery'
 
 /** Deployment configuration for the Grok Bot tools. */
 export interface Config {
-  /** Use the signed-in Grok Bot desktop app session. Default true. */
+  /** Use signed-in Grok Bot desktop credentials. Default true. */
   appSession?: boolean
   /** Deadline for one Grok gateway request in milliseconds. */
   requestTimeoutMs?: number

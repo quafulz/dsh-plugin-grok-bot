@@ -27,6 +27,8 @@ export interface LoadGatewaySessionOptions {
   home?: string
   env?: NodeJS.ProcessEnv
   appData?: string
+  /** Active account scope from the desktop app, when known. */
+  accountScope?: string
   getKeychainPassword?: (platform: NodeJS.Platform) => string
   unprotectData?: (blob: Buffer) => Buffer
 }
@@ -67,6 +69,24 @@ export function grokBotGatewayDescriptorPath(
   return join(grokBotAppDataPath(home, platform, env), 'gateway-descriptor.json')
 }
 
+/** Return the desktop app's account-secret path for one platform. */
+export function grokBotSandSecretsPath(
+  home: string = homedir(),
+  platform: NodeJS.Platform = process.platform,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  return join(grokBotAppDataPath(home, platform, env), 'sand-secrets.json')
+}
+
+/** Return the desktop app's status marker path for one platform. */
+export function grokBotDesktopStatusPath(
+  home: string = homedir(),
+  platform: NodeJS.Platform = process.platform,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  return join(grokBotAppDataPath(home, platform, env), 'desktop-status.json')
+}
+
 /** Whether a Grok Bot desktop gateway descriptor exists on this host. */
 export function hasGrokBotGatewaySession(
   options: LoadGatewaySessionOptions = {},
@@ -78,7 +98,27 @@ export function hasGrokBotGatewaySession(
     && existsSync(grokBotGatewayDescriptorPath(home, platform, env))
 }
 
-function encryptedPayload(wrapped: unknown): string {
+interface EncryptedDescriptorEntry {
+  scope: string
+  encrypted: string
+  savedAtMs?: number
+}
+
+function encryptedDescriptorEntry(
+  scope: string,
+  value: unknown,
+): EncryptedDescriptorEntry | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const record = value as { encrypted?: unknown; savedAtMs?: unknown }
+  if (typeof record.encrypted !== 'string' || !record.encrypted) return null
+  return {
+    scope,
+    encrypted: record.encrypted,
+    ...(typeof record.savedAtMs === 'number' ? { savedAtMs: record.savedAtMs } : {}),
+  }
+}
+
+function encryptedPayload(wrapped: unknown, accountScope?: string): string {
   if (!wrapped || typeof wrapped !== 'object' || Array.isArray(wrapped)) {
     throw new GrokBotSessionError(
       'INVALID_DESCRIPTOR',
@@ -88,40 +128,49 @@ function encryptedPayload(wrapped: unknown): string {
   const record = wrapped as {
     version?: unknown
     encrypted?: unknown
-    entries?: Record<string, { encrypted?: unknown }>
+    entries?: Record<string, unknown>
   }
-  if (record.version !== undefined && record.version !== 1 && record.version !== 2) {
+  if (record.version !== undefined
+    && record.version !== 1
+    && record.version !== 2
+    && record.version !== 3) {
     throw new GrokBotSessionError(
       'UNSUPPORTED_VERSION',
       `Unsupported Grok Bot gateway descriptor version ${String(record.version)}.`,
     )
   }
-  let encrypted: unknown
-  if (record.version === 2) {
-    const entries = Object.values(record.entries ?? {})
+  if (record.version === 2 || record.version === 3) {
+    const entries = Object.entries(record.entries ?? {})
+      .map(([scope, value]) => encryptedDescriptorEntry(scope, value))
+      .filter((entry): entry is EncryptedDescriptorEntry => entry !== null)
     if (entries.length === 0) {
       throw new GrokBotSessionError(
         'EMPTY_ENTRIES',
         'Grok Bot gateway descriptor has no saved gateway entries.',
       )
     }
-    if (entries.length > 1) {
-      throw new GrokBotSessionError(
-        'AMBIGUOUS_ENTRIES',
-        'Grok Bot gateway descriptor has multiple saved gateway entries and no active entry selection.',
-      )
+    if (accountScope !== undefined) {
+      const selected = entries.find(entry => entry.scope === accountScope)
+      if (selected) return selected.encrypted
     }
-    encrypted = entries[0]?.encrypted
-  } else {
-    encrypted = record.encrypted
+    if (entries.length === 1) return entries[0]!.encrypted
+    const newest = entries
+      .filter((entry): entry is EncryptedDescriptorEntry & { savedAtMs: number } =>
+        entry.savedAtMs !== undefined)
+      .sort((left, right) => right.savedAtMs - left.savedAtMs)[0]
+    if (newest) return newest.encrypted
+    throw new GrokBotSessionError(
+      'AMBIGUOUS_ENTRIES',
+      'Grok Bot gateway descriptor has multiple saved gateway entries and no active entry selection.',
+    )
   }
-  if (typeof encrypted !== 'string' || !encrypted) {
+  if (typeof record.encrypted !== 'string' || !record.encrypted) {
     throw new GrokBotSessionError(
       'MISSING_ENCRYPTED_PAYLOAD',
       'Grok Bot gateway descriptor is missing an encrypted payload.',
     )
   }
-  return encrypted
+  return record.encrypted
 }
 
 function safeStorageKey(password: string, platform: NodeJS.Platform): Buffer {
@@ -225,6 +274,146 @@ function sessionEnv(env: NodeJS.ProcessEnv, appData: string | undefined): NodeJS
   return { ...env, APPDATA: appData }
 }
 
+function decryptDesktopSecret(
+  encrypted: string,
+  options: {
+    platform: NodeJS.Platform
+    home: string
+    env: NodeJS.ProcessEnv
+    getKeychainPassword: (platform: NodeJS.Platform) => string
+    unprotectData: (blob: Buffer) => Buffer
+  },
+): string {
+  const { platform, home, env, getKeychainPassword, unprotectData } = options
+  if (platform === 'win32') {
+    return decryptWindowsSafeStorageString(
+      encrypted,
+      readWindowsSafeStorageKey(home, env, unprotectData),
+    )
+  }
+  const prefix = Buffer.from(encrypted, 'base64').subarray(0, 3).toString('latin1')
+  const needsKeychain = !(platform === 'linux' && prefix === SAFE_STORAGE_PREFIX_V10)
+  return decryptSafeStorageString(
+    encrypted,
+    needsKeychain ? getKeychainPassword(platform) : LINUX_BASIC_TEXT_PASSWORD,
+    platform,
+  )
+}
+
+interface GrokBotAccountState {
+  activeScope?: string
+  accounts: Record<string, Record<string, unknown>>
+}
+
+function accountState(value: unknown): GrokBotAccountState | null {
+  let parsed = value
+  if (typeof parsed === 'string') {
+    try {
+      parsed = JSON.parse(parsed)
+    } catch {
+      return null
+    }
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null
+  const record = parsed as { active?: unknown; accounts?: unknown }
+  const activeScope = typeof record.active === 'string' && record.active
+    ? record.active
+    : undefined
+  if (!record.accounts || typeof record.accounts !== 'object' || Array.isArray(record.accounts)) {
+    return { ...(activeScope === undefined ? {} : { activeScope }), accounts: {} }
+  }
+  const accounts: Record<string, Record<string, unknown>> = {}
+  for (const [scope, account] of Object.entries(record.accounts)) {
+    if (account && typeof account === 'object' && !Array.isArray(account)) {
+      accounts[scope] = account as Record<string, unknown>
+    }
+  }
+  return { ...(activeScope === undefined ? {} : { activeScope }), accounts }
+}
+
+function readAccountState(path: string): GrokBotAccountState | null {
+  if (!existsSync(path)) return null
+  const wrapped: unknown = JSON.parse(readFileSync(path, 'utf8'))
+  if (!wrapped || typeof wrapped !== 'object' || Array.isArray(wrapped)) return null
+  return accountState((wrapped as { 'cursor-accounts'?: unknown })['cursor-accounts'])
+}
+
+/** Read the desktop app's currently selected account scope, when available. */
+export function loadGrokBotActiveAccountScope(
+  options: LoadGatewaySessionOptions = {},
+): string | null {
+  const platform = options.platform ?? process.platform
+  const home = options.home ?? homedir()
+  const env = sessionEnv(options.env ?? process.env, options.appData)
+  if (!SUPPORTED_PLATFORMS.has(platform)) return null
+  const state = readAccountState(grokBotSandSecretsPath(home, platform, env))
+  if (state?.activeScope) return state.activeScope
+  const scopes = Object.keys(state?.accounts ?? {})
+  return scopes.length === 1 ? scopes[0]! : null
+}
+
+/**
+ * Decrypt the active account's access token from `sand-secrets.json`.
+ * Newer Grok Bot builds use this token to mint a gateway session even before
+ * they persist a `gateway-descriptor.json`.
+ */
+export function loadGrokBotAccessToken(
+  options: LoadGatewaySessionOptions = {},
+): string | null {
+  const platform = options.platform ?? process.platform
+  const home = options.home ?? homedir()
+  const env = sessionEnv(options.env ?? process.env, options.appData)
+  const getKeychainPassword = options.getKeychainPassword ?? readKeychainPassword
+  const unprotectData = options.unprotectData ?? unprotectWithDpapi
+  if (!SUPPORTED_PLATFORMS.has(platform)) return null
+  const state = readAccountState(grokBotSandSecretsPath(home, platform, env))
+  if (!state) return null
+  const selected = state.activeScope === undefined
+    ? undefined
+    : state.accounts[state.activeScope]
+  const account = selected ?? (Object.keys(state.accounts).length === 1
+    ? Object.values(state.accounts)[0]
+    : undefined)
+  if (!account) {
+    throw new GrokBotSessionError(
+      'AMBIGUOUS_ACCOUNTS',
+      'Grok Bot account secrets contain multiple accounts and no active account selection.',
+    )
+  }
+  const encrypted = account['cursor-access-token']
+  if (typeof encrypted !== 'string' || !encrypted) {
+    throw new GrokBotSessionError(
+      'MISSING_ACCESS_TOKEN',
+      'Grok Bot account secrets do not contain an access token.',
+    )
+  }
+  return decryptDesktopSecret(encrypted, {
+    platform,
+    home,
+    env,
+    getKeychainPassword,
+    unprotectData,
+  })
+}
+
+/** Read the running desktop app version from its status marker. */
+export function loadGrokBotAppVersion(
+  options: LoadGatewaySessionOptions = {},
+): string | null {
+  const platform = options.platform ?? process.platform
+  const home = options.home ?? homedir()
+  const env = sessionEnv(options.env ?? process.env, options.appData)
+  if (!SUPPORTED_PLATFORMS.has(platform)) return null
+  const path = grokBotDesktopStatusPath(home, platform, env)
+  if (!existsSync(path)) return null
+  const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'))
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null
+  const appVersion = (parsed as { appVersion?: unknown }).appVersion
+  return typeof appVersion === 'string' && appVersion.trim()
+    ? appVersion.trim()
+    : null
+}
+
 /**
  * Read, decrypt, and validate the desktop app's saved gateway credentials.
  * @param options - platform, home, environment, and test injection points.
@@ -244,22 +433,15 @@ export function loadGrokBotGatewaySession(
   if (!existsSync(path)) return null
 
   const wrapped: unknown = JSON.parse(readFileSync(path, 'utf8'))
-  const encrypted = encryptedPayload(wrapped)
-  let clear: string
-  if (platform === 'win32') {
-    clear = decryptWindowsSafeStorageString(
-      encrypted,
-      readWindowsSafeStorageKey(home, env, unprotectData),
-    )
-  } else {
-    const prefix = Buffer.from(encrypted, 'base64').subarray(0, 3).toString('latin1')
-    const needsKeychain = !(platform === 'linux' && prefix === SAFE_STORAGE_PREFIX_V10)
-    clear = decryptSafeStorageString(
-      encrypted,
-      needsKeychain ? getKeychainPassword(platform) : LINUX_BASIC_TEXT_PASSWORD,
-      platform,
-    )
-  }
+  const accountScope = options.accountScope ?? loadGrokBotActiveAccountScope(options) ?? undefined
+  const encrypted = encryptedPayload(wrapped, accountScope)
+  const clear = decryptDesktopSecret(encrypted, {
+    platform,
+    home,
+    env,
+    getKeychainPassword,
+    unprotectData,
+  })
 
   const descriptor: unknown = JSON.parse(clear)
   if (!descriptor || typeof descriptor !== 'object' || Array.isArray(descriptor)) {
@@ -270,7 +452,7 @@ export function loadGrokBotGatewaySession(
   }
   const record = descriptor as { baseUrl?: unknown; token?: unknown; headers?: unknown }
   if (typeof record.baseUrl !== 'string' || !record.baseUrl
-    || typeof record.token !== 'string' || !record.token) {
+    || (record.token !== undefined && typeof record.token !== 'string')) {
     throw new GrokBotSessionError(
       'INCOMPLETE_DESCRIPTOR',
       'Decrypted Grok Bot gateway descriptor is incomplete.',
@@ -278,7 +460,7 @@ export function loadGrokBotGatewaySession(
   }
   return {
     gatewayUrl: record.baseUrl.replace(/\/$/, ''),
-    gatewayToken: record.token,
+    gatewayToken: typeof record.token === 'string' ? record.token : '',
     gatewayHeaders: normalizeHeaderMap(record.headers),
   }
 }

@@ -7,6 +7,9 @@ import test from 'node:test'
 
 import {
   grokBotGatewayDescriptorPath,
+  grokBotSandSecretsPath,
+  loadGrokBotAccessToken,
+  loadGrokBotAppVersion,
   loadGrokBotGatewaySession,
 } from '../src/grok/app-session.ts'
 
@@ -80,6 +83,86 @@ test('returns null when the desktop descriptor is absent', () => {
       home,
       env: {},
     }), null)
+  } finally {
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test('loads the active entry from a version 3 gateway descriptor', () => {
+  const home = mkdtempSync(join(tmpdir(), 'grok-session-v3-'))
+  try {
+    const path = grokBotGatewayDescriptorPath(home, 'darwin', {})
+    mkdirSync(dirname(path), { recursive: true })
+    const descriptor = JSON.stringify({
+      baseUrl: 'https://gateway.cursor.sh/',
+      token: 'active-token',
+      headers: { 'x-test-header': 'yes' },
+    })
+    writeFileSync(path, JSON.stringify({
+      version: 3,
+      entries: {
+        'other-account': {
+          savedAtMs: 20,
+          encrypted: encrypt(JSON.stringify({ baseUrl: 'https://other.cursor.sh' }), 'keychain-password', 1003),
+        },
+        'active-account': {
+          savedAtMs: 10,
+          encrypted: encrypt(descriptor, 'keychain-password', 1003),
+        },
+      },
+    }))
+    const session = loadGrokBotGatewaySession({
+      platform: 'darwin',
+      home,
+      env: {},
+      accountScope: 'active-account',
+      getKeychainPassword: () => 'keychain-password',
+    })
+    assert.equal(session?.gatewayToken, 'active-token')
+    assert.deepEqual(session?.gatewayHeaders, { 'x-test-header': 'yes' })
+  } finally {
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test('loads the active account access token from sand-secrets.json', () => {
+  const home = mkdtempSync(join(tmpdir(), 'grok-secrets-'))
+  try {
+    const path = grokBotSandSecretsPath(home, 'darwin', {})
+    mkdirSync(dirname(path), { recursive: true })
+    writeFileSync(path, JSON.stringify({
+      version: 1,
+      'cursor-accounts': JSON.stringify({
+        active: 'active-account',
+        accounts: {
+          'other-account': {
+            'cursor-access-token': encrypt('other-access-token', 'keychain-password', 1003),
+          },
+          'active-account': {
+            'cursor-access-token': encrypt('active-access-token', 'keychain-password', 1003),
+          },
+        },
+      }),
+    }))
+    const token = loadGrokBotAccessToken({
+      platform: 'darwin',
+      home,
+      env: {},
+      getKeychainPassword: () => 'keychain-password',
+    })
+    assert.equal(token, 'active-access-token')
+  } finally {
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test('reads the Grok Bot app version from desktop-status.json', () => {
+  const home = mkdtempSync(join(tmpdir(), 'grok-version-'))
+  try {
+    const path = join(home, 'Library/Application Support/Grok Bot/desktop-status.json')
+    mkdirSync(dirname(path), { recursive: true })
+    writeFileSync(path, JSON.stringify({ version: 1, appVersion: '0.77.0', signedIn: true }))
+    assert.equal(loadGrokBotAppVersion({ platform: 'darwin', home, env: {} }), '0.77.0')
   } finally {
     rmSync(home, { recursive: true, force: true })
   }

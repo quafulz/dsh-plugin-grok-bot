@@ -14,6 +14,8 @@ import {
   redactSecrets,
 } from './url-policy.js'
 import {
+  loadGrokBotAccessToken,
+  loadGrokBotAppVersion,
   loadGrokBotGatewaySession,
   type GrokBotGatewaySession,
 } from './app-session.js'
@@ -61,6 +63,10 @@ export interface GrokGatewayOptions {
   appSession?: boolean
   /** Test seam for the desktop session loader. */
   loadSession?: () => GrokBotGatewaySession | null
+  /** Test seam for the desktop access-token loader. */
+  loadAccessToken?: () => string | null
+  /** Test seam for the desktop app version. */
+  appVersion?: string | null
   /** Caller cancellation for authentication or method calls. */
   signal?: AbortSignal
 }
@@ -228,7 +234,7 @@ function gatewayOverride(env: NodeJS.ProcessEnv): GrokBotGatewaySession | null {
 async function ensureSandbox(
   accessToken: string,
   options: Required<Pick<GrokGatewayOptions, 'requestTimeoutMs' | 'maxResponseBytes'>>
-    & Pick<GrokGatewayOptions, 'fetchImpl' | 'env' | 'signal'>,
+    & Pick<GrokGatewayOptions, 'fetchImpl' | 'env' | 'signal' | 'appVersion'>,
 ): Promise<GrokBotGatewaySession> {
   const env = options.env ?? process.env
   const fetchImpl = options.fetchImpl ?? fetch
@@ -242,7 +248,7 @@ async function ensureSandbox(
       method: 'POST',
       redirect: 'error',
       signal: deadline(options.signal, options.requestTimeoutMs),
-      headers: ensureSandboxHeaders(accessToken, env),
+      headers: ensureSandboxHeaders(accessToken, env, options.appVersion ?? undefined),
       body: '{}',
     })
     body = await readJson(response, options.maxResponseBytes)
@@ -261,15 +267,15 @@ async function ensureSandbox(
   const gatewayUrl = pick(body, 'gatewayUrl', 'gateway_url')
   const gatewayToken = pick(body, 'gatewayToken', 'gateway_token')
   if (typeof gatewayUrl !== 'string' || !gatewayUrl
-    || typeof gatewayToken !== 'string' || !gatewayToken) {
+    || (gatewayToken !== undefined && typeof gatewayToken !== 'string')) {
     throw new GrokBotError(
-      'EnsureSandBox returned no gatewayUrl/gatewayToken. A Cursor dashboard API key does not work here.',
+      'EnsureSandBox returned no gatewayUrl. A Cursor dashboard API key does not work here.',
       { method: 'EnsureSandBox' },
     )
   }
   return {
     gatewayUrl: assertAllowedCredentialUrl(gatewayUrl, 'gateway', env),
-    gatewayToken,
+    gatewayToken: typeof gatewayToken === 'string' ? gatewayToken : '',
     gatewayHeaders: mergeGatewayHeaders(headersFromEnsureSandbox(body), headersFromEnv(env)),
   }
 }
@@ -293,6 +299,7 @@ export async function connectGateway(
     }
   }
 
+  let appSessionError: unknown
   if (options.appSession !== false) {
     try {
       const loaded = options.loadSession
@@ -306,16 +313,36 @@ export async function connectGateway(
         }
       }
     } catch (error) {
-      if (!accessTokenFromEnv(env)) throw error
+      appSessionError = error
     }
   }
 
-  const token = accessTokenFromEnv(env)
+  let desktopToken: string | null = null
+  if (options.appSession !== false) {
+    try {
+      desktopToken = options.loadAccessToken
+        ? options.loadAccessToken()
+        : loadGrokBotAccessToken({ env })
+    } catch (error) {
+      appSessionError ??= error
+    }
+  }
+  const token = accessTokenFromEnv(env) || desktopToken
   if (!token) {
+    if (appSessionError !== undefined) throw appSessionError
     throw new GrokBotError(
-      'No Grok Bot auth found. Install and sign in to the Grok Bot desktop app, or set GROK_BOT_GATEWAY_URL + GROK_BOT_GATEWAY_TOKEN, or set CURSOR_ACCESS_TOKEN.',
+      'No Grok Bot auth found. Sign in to the Grok Bot desktop app, or set GROK_BOT_GATEWAY_URL + GROK_BOT_GATEWAY_TOKEN, or set CURSOR_ACCESS_TOKEN.',
       { code: 'NO_AUTH' },
     )
+  }
+
+  let appVersion = options.appVersion
+  if (appVersion === undefined) {
+    try {
+      appVersion = loadGrokBotAppVersion({ env })
+    } catch {
+      appVersion = null
+    }
   }
   return ensureSandbox(token, {
     requestTimeoutMs,
@@ -323,6 +350,7 @@ export async function connectGateway(
     fetchImpl: options.fetchImpl,
     env,
     signal: options.signal,
+    appVersion,
   })
 }
 

@@ -60,15 +60,25 @@ Or add the row manually:
 
 ## Authentication
 
-The default path reuses the Grok Bot desktop app's encrypted gateway session. Install
-Grok Bot, sign in once, and make sure the DSH process runs as the same OS user with access
-to the app's data directory and keychain.
+The default path reuses the Grok Bot desktop app's signed-in session. Install Grok Bot,
+sign in once, and make sure the DSH process runs as the same OS user with access to the
+app's data directory and keychain.
 
-The desktop session locations are:
+The plugin reads the credentials exposed by the installed Grok Bot version:
 
-- macOS: `~/Library/Application Support/Grok Bot/gateway-descriptor.json`
-- Linux: `~/.config/Grok Bot/gateway-descriptor.json` or `$XDG_CONFIG_HOME/Grok Bot/`
-- Windows: `%APPDATA%\Grok Bot\gateway-descriptor.json`
+- `gateway-descriptor.json`: saved gateway routing credentials. Legacy versions 1 and 2
+  are supported, as are version 3 descriptors with per-account entries.
+- `sand-secrets.json`: the active account's encrypted access token. When a gateway
+  descriptor has not been written yet, the plugin decrypts this token and calls
+  `EnsureSandBox` to mint a gateway session.
+- `desktop-status.json`: the running app version, sent to `EnsureSandBox` so Cursor does
+  not reject the request as an unsupported client.
+
+These files live under:
+
+- macOS: `~/Library/Application Support/Grok Bot/`
+- Linux: `~/.config/Grok Bot/` or `$XDG_CONFIG_HOME/Grok Bot/`
+- Windows: `%APPDATA%\Grok Bot\`
 
 For headless or remote deployments, provide an explicit gateway override:
 
@@ -78,7 +88,8 @@ export GROK_BOT_GATEWAY_TOKEN='...'
 ```
 
 Alternatively, provide `CURSOR_ACCESS_TOKEN` so the plugin can call `EnsureSandBox`.
-A Cursor dashboard API key does not work.
+A Cursor dashboard API key does not work. If the app version cannot be read, set
+`SAND_CLIENT_VERSION` to the installed Grok Bot version.
 
 Credential URLs are checked before use. Gateway credentials are limited to Cursor
 gateway hosts; EnsureSandBox backend URLs are limited to Cursor API hosts. Loopback
@@ -88,7 +99,7 @@ gateways require `GROK_BOT_ALLOW_LOCAL_GATEWAY=1`.
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `appSession` | `true` | Read the signed-in Grok Bot desktop app session when no explicit gateway env is set. |
+| `appSession` | `true` | Read signed-in Grok Bot desktop credentials when no explicit gateway env is set. |
 | `requestTimeoutMs` | `30000` | Deadline for one gateway HTTP request. |
 | `maxResponseBytes` | `2097152` | Maximum buffered gateway response size. |
 | `defaultThreadLimit` | `40` | Default trailing-entry count for `grok_thread` (1-200). |
