@@ -16,12 +16,34 @@ Grok Bot replies are asynchronous: send once, continue useful work, then read th
 
 ## Install
 
+### From Git
+
+No npm release required:
+
 ```sh
-dsh plugin --profile tui add dsh-plugin-grok-bot
+dsh plugin --profile dsh-tui add github:quafulz/dsh-plugin-grok-bot
 ```
 
-The package is a standard DSH bundle: its `package.json` points `dsh.bundle.patch` at
-`cordis.patch.yml`, which inserts the `tool-grok-bot` row into the profile.
+### From a local clone
+
+Best while developing the plugin. Build once, then point the profile at the directory:
+
+```sh
+git clone https://github.com/quafulz/dsh-plugin-grok-bot.git
+cd dsh-plugin-grok-bot
+npm install --include=dev && npm run build
+
+dsh plugin --profile dsh-tui add /absolute/path/to/dsh-plugin-grok-bot
+```
+
+### From npm
+
+```sh
+dsh plugin --profile dsh-tui add dsh-plugin-grok-bot
+```
+
+Pin a release with `dsh-plugin-grok-bot@0.1.0`. Maintainers publish with `npm publish`.
+Remove any route with `dsh plugin --profile dsh-tui remove dsh-plugin-grok-bot`.
 
 Or add the row manually:
 
