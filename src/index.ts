@@ -10,8 +10,10 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 
+import { registerGrokbotCommand } from './command/register.js'
 import { resolveConfig, type Config } from './config.js'
 import { GrokBotService } from './service.js'
+import { registerGrokbotSkill } from './skill.js'
 import { registerSendTool } from './tools/send.js'
 import { registerTargetsTool } from './tools/targets.js'
 import { registerThreadTool } from './tools/thread.js'
@@ -27,7 +29,9 @@ export const name = 'grok-bot'
 export const inject = ['tools']
 
 /**
- * Register `grok_targets`, `grok_send`, and `grok_thread`.
+ * Register the model-facing tools, the `/grokbot` command and the bundled
+ * skill. Every surface is optional: a composition without `commands` or
+ * `skills` keeps the remaining ones.
  * @param ctx - context carrying the DSH tool runtime.
  * @param config - deployment limits and auth source selection.
  */
@@ -37,4 +41,11 @@ export function apply(ctx: Context, config: Config): void {
   registerTargetsTool(ctx, service)
   registerSendTool(ctx, service)
   registerThreadTool(ctx, service, resolved)
+  // Order matters: dsh-TUI turns a user-invocable skill into a `/name`
+  // command only when no command of that name exists yet, and it prefers a
+  // registered command on collision. Cordis settles `ctx.inject` forks in
+  // creation order, so registering the command first keeps `/grokbot` on the
+  // deterministic, dialog-driven path.
+  registerGrokbotCommand(ctx, service, resolved)
+  registerGrokbotSkill(ctx)
 }

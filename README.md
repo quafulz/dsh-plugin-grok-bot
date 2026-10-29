@@ -103,6 +103,37 @@ gateways require `GROK_BOT_ALLOW_LOCAL_GATEWAY=1`.
 | `requestTimeoutMs` | `30000` | Deadline for one gateway HTTP request. |
 | `maxResponseBytes` | `2097152` | Maximum buffered gateway response size. |
 | `defaultThreadLimit` | `40` | Default trailing-entry count for `grok_thread` (1-200). |
+| `locale` | `en` | Copy language for `/grokbot` and its dialogs (`en` or `zh`). |
+
+## The `/grokbot` command
+
+The plugin registers a `grokbot` slash command and a same-named bundled skill. A host that
+can run DSH commands (dsh-TUI does) gets the command, which runs without a model turn. The
+grammar is forgiving on purpose:
+
+| Input | Behavior |
+| --- | --- |
+| `/grokbot` | Lists every visible bot and group, then shows the usage line. |
+| `/grokbot <message>` | Treats the text as the message and asks which bot should receive it. |
+| `/grokbot send <message>` | Same as above; `send` is an optional shape word. |
+| `/grokbot send <bot>` | Resolves the bot and asks what it should receive. |
+| `/grokbot send <bot> <message>` | Sends immediately. |
+| `/grokbot send -- <text>` | Sends the literal text (skips target matching). |
+| `/grokbot read [bot] [limit]` | Reads a thread tail; reuses the bot from the previous send when omitted. |
+| `/grokbot list [query]` | Lists or filters the roster. |
+
+Asking happens through the host's managed dialogs, so the user picks from a list instead of
+memorising a format. A host without that seam (the official DSH front end, or a headless
+embedder) still serves fully specified lines and answers a missing argument with usage.
+
+Targets are matched against the current roster by longest prefix on name, title, or id, so
+a multi-word bot name works in `send <bot> <message>`. If a message legitimately starts with
+a bot name, use the `--` form.
+
+The bundled skill covers the free-form route: when a user asks in plain language, the model
+can load `/grokbot`'s instructions from the DSH skill catalog and drive `grok_targets`,
+`grok_send`, and `grok_thread`, asking with `ask_user_question` when the target or message
+is unclear.
 
 ## Usage
 
@@ -271,7 +302,8 @@ npm pack --dry-run
 ```
 
 The tests cover desktop-session decryption, gateway methods and delivery classification,
-transcript cursors, URL policy, redaction, and tool registration.
+transcript cursors, URL policy, redaction, tool registration, the `/grokbot` intent grammar
+and its dialog flow, and bundled-skill registration.
 
 ## Attribution
 

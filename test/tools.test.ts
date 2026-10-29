@@ -15,6 +15,9 @@ function registeredTools(): Map<string, ToolDefinition> {
         return () => {}
       },
     },
+    // Tools are the subject here; the command and skill forks never run.
+    inject() {},
+    logger: { warn() {} },
   } as unknown as Context
   apply(ctx, {
     appSession: true,

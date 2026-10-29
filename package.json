@@ -1,7 +1,7 @@
 {
   "name": "dsh-plugin-grok-bot",
   "version": "0.1.0",
-  "description": "Native DSH tools for Grok Bot: list bots and groups, send messages, and read threaded replies.",
+  "description": "Native DSH tools, a /grokbot command and a bundled skill for Grok Bot: list bots and groups, send messages, and read threaded replies.",
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/types/index.d.ts",
@@ -15,6 +15,7 @@
   },
   "files": [
     "lib",
+    "skills",
     "cordis.patch.yml",
     "README.md",
     "LICENSE",
@@ -32,7 +33,9 @@
     "grok",
     "grok-bot",
     "gbot",
-    "tools"
+    "tools",
+    "skill",
+    "slash-command"
   ],
   "license": "MIT",
   "author": "quafulz",

@@ -14,6 +14,10 @@ test('registers the three focused Grok Bot tools', () => {
         return () => {}
       },
     },
+    // The command and skill surfaces ride optional forks; this composition
+    // mounts neither, so the callbacks never run.
+    inject() {},
+    logger: { warn() {} },
   } as unknown as Context
 
   apply(ctx, {
