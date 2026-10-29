@@ -35,6 +35,11 @@ reach it.
    card or a confirmation prompt, report it and let the user decide.
 7. **Summarise, do not dump.** Threads can be long. Quote the entries that
    answer the user's question and mention how many were read.
+8. **Surface attachments explicitly.** Bot files and images appear in entry
+   text as a `📎 file name` line followed by a clickable loopback download
+   link. Give the user the file name and link. Opening the link performs the
+   `readAttachmentChunk` transfer; do not fetch or claim to have opened the
+   file yourself.
 
 ## Command shortcut
 

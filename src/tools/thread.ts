@@ -3,7 +3,9 @@ import { defineTool } from '@deepseek-ai/dsh-tools'
 
 import type { ResolvedConfig } from '../config.js'
 import type { GrokBotService } from '../service.js'
+import type { AttachmentLinker } from '../grok/attachment-links.js'
 import { projectThreadEntries, transcriptDelta } from '../grok/transcript.js'
+import { messagesFor } from '../messages.js'
 import { targetSchema, targetView, textContent, threadEntrySchema } from './shared.js'
 
 /** Register `grok_thread` on the tool runtime. */
@@ -11,11 +13,13 @@ export function registerThreadTool(
   ctx: Context,
   service: GrokBotService,
   config: ResolvedConfig,
+  attachments?: AttachmentLinker,
 ): void {
+  const messages = messagesFor(config.locale)
   ctx.tools.register(defineTool({
     name: 'grok_thread',
     description:
-      'Read a bounded Grok Bot thread tail. By default it returns a small receipt; pass full=true for bounded entry text. Pass the previous cursor as after to receive only new entries. An unknown cursor returns a bounded snapshot with gapReset=true.',
+      'Read a bounded Grok Bot thread tail. By default it returns a small receipt; pass full=true for bounded entry text with normalized speakers and attachment links. Pass the previous cursor as after to receive only new entries. An unknown cursor returns a bounded snapshot with gapReset=true.',
     parameters: {
       target: {
         type: 'string',
@@ -71,9 +75,16 @@ export function registerThreadTool(
         } else if (value.entries.length === 0) {
           lines.push('No new entries.')
         } else {
-          lines.push(value.entries.map(entry =>
-            `[${entry.id}] ${entry.kind}${entry.role ? `/${entry.role}` : ''}: ${entry.text}${entry.truncated ? '…' : ''}`,
-          ).join('\n'))
+          lines.push(value.entries.map((entry) => {
+            const speaker = entry.speaker === 'user'
+              ? messages.userSpeaker
+              : entry.speaker === 'assistant' ? value.target.name : messages.otherSpeaker
+            const prefix = entry.id === '' ? '' : `[${entry.id}] `
+            const body = entry.text.trimEnd()
+            return body === ''
+              ? `${prefix}${speaker}`
+              : `${prefix}${speaker}\n${body}${entry.truncated ? '…' : ''}`
+          }).join('\n\n'))
         }
         return textContent(lines.join('\n'))
       },
@@ -89,7 +100,15 @@ export function registerThreadTool(
         ...(args.after === undefined ? {} : { after: args.after }),
         limit,
       })
-      const entries = projectThreadEntries(delta.entries)
+      const links = args.full === true && attachments !== undefined
+        ? await attachments.linksFor(tail.target.id, delta.entries, exec.signal)
+        : undefined
+      const entries = projectThreadEntries(
+        delta.entries,
+        links === undefined
+          ? {}
+          : { attachmentUrl: attachment => links.get(attachment.source) },
+      )
       const summary = args.after === undefined
         ? `${delta.entryCount} entr${delta.entryCount === 1 ? 'y' : 'ies'}`
         : delta.gapReset

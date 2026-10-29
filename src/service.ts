@@ -4,6 +4,7 @@ import {
   connectGateway,
   createGrokClient,
   type GrokAgentRecord,
+  type GrokAttachmentChunk,
   type GrokClient,
   type GrokSendReceipt,
   type GrokTranscriptTail,
@@ -112,6 +113,19 @@ export class GrokBotService {
     return this.#readWithReconnect(
       signal,
       async client => client.getTranscriptTail(target, limit, { signal }),
+    )
+  }
+
+  /** Read one attachment byte range from the Grok Bot cloud computer. */
+  async readAttachmentChunk(
+    path: string,
+    offset: number,
+    length: number,
+    signal?: AbortSignal,
+  ): Promise<GrokAttachmentChunk> {
+    return this.#readWithReconnect(
+      signal,
+      async client => client.readAttachmentChunk(path, offset, length, { signal }),
     )
   }
 

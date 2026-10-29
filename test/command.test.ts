@@ -286,3 +286,63 @@ test('gateway failures settle as command errors', async () => {
   assert.equal(result.kind, 'error')
   assert.equal(result.text, 'No Grok Bot credentials')
 })
+
+test('read formats the latest exchange without wire kinds and shows attachment links', async () => {
+  const service = fakeService({
+    targets: async () => [record(), secondBot],
+    thread: async () => tail(secondBot, [
+      { id: 'old-user', kind: 'message', role: 'user', content: 'old question' },
+      { id: 'old-answer', kind: 'send-message', message: { type: 'text', content: 'old answer' } },
+      { id: 'new-user', kind: 'message', role: 'user', content: 'current question' },
+      { id: 'new-answer', kind: 'send-message', message: { type: 'text', content: 'current answer' } },
+      {
+        id: 'new-file',
+        kind: 'send-message',
+        message: {
+          type: 'attachment',
+          file_name: 'form.pdf',
+          url: 'https://example.com/form.pdf',
+        },
+      },
+    ]),
+  })
+  const command = createGrokbotCommand({ service, config, messages })
+  const result = await handlerOf(command)('read Support Bot')
+
+  assert.equal(result.kind, 'success')
+  const text = result.text ?? ''
+  assert.match(text, /current question/)
+  assert.match(text, /current answer/)
+  assert.match(text, /form\.pdf/)
+  assert.match(text, /https:\/\/example\.com\/form\.pdf/)
+  assert.match(text, /latest exchange/i)
+  assert.doesNotMatch(text, /old question|old answer/)
+  assert.doesNotMatch(text, /send-message/)
+})
+
+test('read replaces an attachment file URL with the loopback download link', async () => {
+  const raw = 'file:///home/box/agent-data/agents/bot/assets/form.pdf'
+  const download = 'http://127.0.0.1:4567/a/token/form.pdf'
+  let linkedAgentId = ''
+  const attachments = {
+    async linksFor(agentId: string) {
+      linkedAgentId = agentId
+      return new Map([[raw, download]])
+    },
+    close() {},
+  }
+  const service = fakeService({
+    targets: async () => [record(), secondBot],
+    thread: async () => tail(secondBot, [{
+      id: 'new-file',
+      kind: 'send-message',
+      message: { type: 'attachment', file_name: 'form.pdf', url: raw },
+    }]),
+  })
+  const command = createGrokbotCommand({ service, config, messages, attachments })
+  const result = await handlerOf(command)('read Support Bot')
+  assert.equal(result.kind, 'success')
+  assert.equal(linkedAgentId, 'bot-2')
+  assert.match(result.text ?? '', /http:\/\/127\.0\.0\.1:4567\/a\/token\/form\.pdf/)
+  assert.doesNotMatch(result.text ?? '', /file:\/\/\/home\/box/)
+})

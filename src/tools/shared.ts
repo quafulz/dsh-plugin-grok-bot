@@ -52,7 +52,17 @@ export const threadEntrySchema = {
     id: { type: 'string', required: true, description: 'Opaque entry id usable as a cursor.' },
     kind: { type: 'string', required: true, description: 'Transcript entry kind.' },
     role: { type: 'string', description: 'Speaker role when the gateway reports one.' },
-    text: { type: 'string', required: true, description: 'Bounded entry text.' },
+    speaker: {
+      type: 'string',
+      required: true,
+      enum: ['user', 'assistant', 'other'],
+      description: 'Normalized conversation side for display and turn selection.',
+    },
+    text: {
+      type: 'string',
+      required: true,
+      description: 'Bounded entry text; attachment entries include a file name and source link.',
+    },
     truncated: {
       type: 'boolean',
       required: true,

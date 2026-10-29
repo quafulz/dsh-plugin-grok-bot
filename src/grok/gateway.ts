@@ -50,6 +50,16 @@ export interface GrokTranscriptTail {
   transcript: unknown
 }
 
+/** One chunk returned by the gateway attachment reader. */
+export interface GrokAttachmentChunk {
+  /** Full attachment size in bytes, stable across chunks. */
+  totalSize: number
+  /** Gateway-resolved file name when it differs from the transcript name. */
+  resolvedName?: string
+  /** Base64 bytes in this chunk. Empty for a size probe (`length: 0`). */
+  bytesBase64: string
+}
+
 /** Bounded polling used to reconcile a submission without a gateway receipt. */
 export interface GrokSendConfirmationOptions {
   /** Transcript reads to attempt. Defaults to 3. */
@@ -204,6 +214,30 @@ function pick(record: unknown, ...keys: string[]): unknown {
 function stringField(record: Record<string, unknown>, ...keys: string[]): string {
   const value = pick(record, ...keys)
   return typeof value === 'string' ? value : ''
+}
+
+/** Parse the gateway's attachment chunk envelope without trusting field types. */
+function attachmentChunkOf(value: unknown): GrokAttachmentChunk {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new GrokBotError('readAttachmentChunk returned an invalid response', {
+      method: 'readAttachmentChunk',
+    })
+  }
+  const record = value as Record<string, unknown>
+  const rawSize = pick(record, 'totalSize', 'total_size')
+  const totalSize = typeof rawSize === 'bigint' ? Number(rawSize) : Number(rawSize)
+  if (!Number.isSafeInteger(totalSize) || totalSize < 0) {
+    throw new GrokBotError('readAttachmentChunk returned no valid totalSize', {
+      method: 'readAttachmentChunk',
+    })
+  }
+  const resolvedName = stringField(record, 'resolvedName', 'resolved_name')
+  const bytesBase64 = stringField(record, 'bytesBase64', 'bytes_base64')
+  return {
+    totalSize,
+    ...(resolvedName === '' ? {} : { resolvedName }),
+    bytesBase64,
+  }
 }
 
 function asAgentRecord(value: unknown): GrokAgentRecord | null {
@@ -601,6 +635,34 @@ export class GrokClient {
       if (match !== undefined) return match
     }
     return { matched: false }
+  }
+
+  /**
+   * Read one byte range of a node-local Grok Bot attachment.
+   *
+   * `offset: 0, length: 0` is the metadata probe: it returns the total size
+   * and optional resolved name without transferring the body. The caller
+   * passes that size back to bound and validate subsequent chunks.
+   */
+  async readAttachmentChunk(
+    path: string,
+    offset: number,
+    length: number,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<GrokAttachmentChunk> {
+    if (path.trim() === '') throw new Error('readAttachmentChunk: path must not be empty')
+    if (!Number.isSafeInteger(offset) || offset < 0) {
+      throw new Error('readAttachmentChunk: offset must be a non-negative safe integer')
+    }
+    if (!Number.isSafeInteger(length) || length < 0) {
+      throw new Error('readAttachmentChunk: length must be a non-negative safe integer')
+    }
+    const data = await this.#call(
+      'readAttachmentChunk',
+      { path, offset, length },
+      options.signal,
+    )
+    return attachmentChunkOf(data)
   }
 
   /** Read the latest bounded transcript tail for a bot or group. */

@@ -26,6 +26,12 @@ export interface GrokbotMessages {
   readonly pickTarget: string
   readonly askMessagePlaceholder: string
   readonly threadEmpty: string
+  /** Speaker label for the human side of a thread. */
+  readonly userSpeaker: string
+  /** Speaker label for non-conversation transcript rows. */
+  readonly otherSpeaker: string
+  /** Shown when `/grokbot read` trims older turns. */
+  readonly latestTurnOnly: string
   /** `1 Grok Bot target` / `2 Grok Bot targets`. */
   targetCount(count: number): string
   /** Filters the roster when the user supplied a query. */
@@ -56,6 +62,9 @@ const EN: GrokbotMessages = {
   pickTarget: 'Send to which bot?',
   askMessagePlaceholder: 'Enter to send, Esc to cancel',
   threadEmpty: 'No entries in this thread yet.',
+  userSpeaker: 'You',
+  otherSpeaker: 'System',
+  latestTurnOnly: 'Showing only the latest exchange.',
   targetCount: count => `${count} Grok Bot target${count === 1 ? '' : 's'}`,
   targetLine: target =>
     `- [${target.isGroup ? 'group' : 'bot'}] ${target.name} (${target.id})${target.title.trim() === '' ? '' : ` — ${target.title}`}`,
@@ -82,6 +91,9 @@ const ZH: GrokbotMessages = {
   pickTarget: '发送给哪个 bot？',
   askMessagePlaceholder: '回车发送，Esc 取消',
   threadEmpty: '这个会话还没有内容。',
+  userSpeaker: '你',
+  otherSpeaker: '系统',
+  latestTurnOnly: '只显示最新一轮对话。',
   targetCount: count => `共 ${count} 个目标`,
   targetLine: target =>
     `- [${target.isGroup ? '群组' : 'bot'}] ${target.name} (${target.id})${target.title.trim() === '' ? '' : ` — ${target.title}`}`,

@@ -21,7 +21,13 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { ResolvedConfig } from '../config.js'
 import { errorText } from '../grok/errors.js'
 import type { GrokAgentRecord, GrokSendReceipt } from '../grok/gateway.js'
-import { projectThreadEntries, transcriptDelta } from '../grok/transcript.js'
+import type { AttachmentLinker } from '../grok/attachment-links.js'
+import {
+  latestTurnEntries,
+  projectThreadEntries,
+  transcriptDelta,
+  type GrokThreadEntry,
+} from '../grok/transcript.js'
 import { messagesFor, type GrokbotMessages } from '../messages.js'
 import { parseGrokbotInput } from './parse.js'
 import type { GrokBotService } from '../service.js'
@@ -98,6 +104,8 @@ export interface GrokbotCommandDeps {
   readonly messages: GrokbotMessages
   /** Absent when the host has no `tuiDialogs` service. */
   readonly dialogs?: () => TuiDialogsLike | undefined
+  /** Optional loopback download-link factory for attachment entries. */
+  readonly attachments?: AttachmentLinker
 }
 
 /**
@@ -107,7 +115,7 @@ export interface GrokbotCommandDeps {
  * @returns a command definition ready for `commands.register`.
  */
 export function createGrokbotCommand(deps: GrokbotCommandDeps): CommandDefinitionLike {
-  const { service, config, messages } = deps
+  const { service, config, messages, attachments } = deps
   const remembered = new Map<string, string>()
 
   return {
@@ -135,7 +143,17 @@ export function createGrokbotCommand(deps: GrokbotCommandDeps): CommandDefinitio
           const limit = intent.limit ?? config.defaultThreadLimit
           const tail = await service.thread(ref, limit, signal)
           rememberTarget(remembered, agent.id, targets, tail.target.id)
-          return { kind: 'success', text: threadText(tail.target.name, tail.transcript, limit, messages) }
+          const delta = transcriptDelta(tail.transcript, { limit })
+          const links = attachments === undefined
+            ? undefined
+            : await attachments.linksFor(tail.target.id, delta.entries, signal)
+          const entries = projectThreadEntries(
+            delta.entries,
+            links === undefined
+              ? {}
+              : { attachmentUrl: attachment => links.get(attachment.source) },
+          )
+          return { kind: 'success', text: threadText(tail.target.name, entries, messages) }
         }
 
         let message = intent.message
@@ -172,17 +190,20 @@ export function createGrokbotCommand(deps: GrokbotCommandDeps): CommandDefinitio
  * @param ctx - plugin activation context.
  * @param service - shared Grok Bot facade.
  * @param config - resolved plugin configuration.
+ * @param attachments - optional loopback download-link factory.
  */
 export function registerGrokbotCommand(
   ctx: Context,
   service: GrokBotService,
   config: ResolvedConfig,
+  attachments?: AttachmentLinker,
 ): void {
   const definition = createGrokbotCommand({
     service,
     config,
     messages: messagesFor(config.locale),
     dialogs: () => ctx.get('tuiDialogs', false) as TuiDialogsLike | undefined,
+    ...(attachments === undefined ? {} : { attachments }),
   })
 
   ctx.inject(['commands'], (commandCtx) => {
@@ -272,21 +293,43 @@ function receiptText(receipt: GrokSendReceipt, messages: GrokbotMessages): strin
 
 function threadText(
   target: string,
-  transcript: unknown,
-  limit: number,
+  entries: readonly GrokThreadEntry[],
   messages: GrokbotMessages,
 ): string {
-  const delta = transcriptDelta(transcript, { limit })
-  const entries = projectThreadEntries(delta.entries)
   if (entries.length === 0) return messages.threadEmpty
-  const shown = entries.slice(-MAX_REPORT_ENTRIES)
-  const lines = [messages.threadHeader(target, entries.length)]
+
+  // A read is about what the bot just said. Older turns are useful context for
+  // the model-facing tool, but a command report should open on the human's
+  // latest prompt instead of replaying the whole tail.
+  const latestTurn = latestTurnEntries(entries)
+  const visible = latestTurn.filter(entry => entry.text.trim() !== '')
+  if (visible.length === 0) return messages.threadEmpty
+
+  const shown = visible.slice(-MAX_REPORT_ENTRIES)
+  const lines = [messages.threadHeader(target, visible.length)]
+  if (latestTurn.length < entries.length) lines.push(messages.latestTurnOnly)
+  lines.push('')
+
+  let previousSpeaker: (typeof shown)[number]['speaker'] | undefined
   for (const entry of shown) {
-    // The speaker is what a reader scans for; the opaque entry id belongs to
-    // the tool surface (replyTo), not to this report.
-    lines.push(`${entry.role ?? entry.kind}: ${entry.text}${entry.truncated ? '…' : ''}`)
+    // Speaker, not the wire kind (`send-message`, `event`, …): the reader
+    // scans for who is talking; the opaque entry id belongs to the tool
+    // surface (`replyTo`), not to this report.
+    const speaker = entry.speaker
+    if (speaker !== previousSpeaker) {
+      if (previousSpeaker !== undefined) lines.push('')
+      lines.push(speaker === 'user'
+        ? messages.userSpeaker
+        : speaker === 'assistant' ? target : messages.otherSpeaker)
+      previousSpeaker = speaker
+    } else {
+      lines.push('')
+    }
+    lines.push(`${entry.text.trimEnd()}${entry.truncated ? '…' : ''}`)
   }
-  if (entries.length > shown.length) lines.push(messages.moreEntries(entries.length - shown.length))
+  if (visible.length > shown.length) {
+    lines.push('', messages.moreEntries(visible.length - shown.length))
+  }
   return lines.join('\n')
 }
 

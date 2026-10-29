@@ -165,6 +165,26 @@ test('getTranscriptTail resolves the target and forwards the bounded limit', asy
   assert.deepEqual(tail?.body, { id: 'group-1', limit: 200 })
 })
 
+test('readAttachmentChunk reads a size probe and a byte range', async () => {
+  const { fetchImpl, calls } = fakeFetch(() => jsonResponse({
+    totalSize: 12,
+    resolvedName: 'form.pdf',
+    bytesBase64: Buffer.from('hello').toString('base64'),
+  }))
+  const client = createGrokClient(session, { fetchImpl })
+  const probe = await client.readAttachmentChunk('/home/box/agent-data/form.pdf', 0, 0)
+  assert.equal(probe.totalSize, 12)
+  assert.equal(probe.resolvedName, 'form.pdf')
+  assert.equal(probe.bytesBase64, Buffer.from('hello').toString('base64'))
+  const chunk = await client.readAttachmentChunk('/home/box/agent-data/form.pdf', 4, 8)
+  assert.equal(chunk.totalSize, 12)
+  assert.deepEqual(calls.map(call => call.body), [
+    { path: '/home/box/agent-data/form.pdf', offset: 0, length: 0 },
+    { path: '/home/box/agent-data/form.pdf', offset: 4, length: 8 },
+  ])
+  assert.equal(calls[0]?.url, 'https://gateway.cursor.sh/api/readAttachmentChunk')
+})
+
 test('connectGateway prefers an explicit gateway environment override', async () => {
   const session = await connectGateway({
     env: {
