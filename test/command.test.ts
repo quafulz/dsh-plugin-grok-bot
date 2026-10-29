@@ -98,6 +98,37 @@ test('the parser recognises a roster target by longest prefix', () => {
   assert.deepEqual(parseGrokbotInput('send Support', targets), { kind: 'send', targetRef: 'support' })
 })
 
+test('the parser accepts a quoted target with spaces in its name', () => {
+  const targets = [record(), secondBot]
+  assert.deepEqual(parseGrokbotInput('send "Support Bot" 你好', targets), {
+    kind: 'send',
+    targetRef: 'bot-2',
+    message: '你好',
+  })
+  assert.deepEqual(parseGrokbotInput("send 'Support Bot'", targets), {
+    kind: 'send',
+    targetRef: 'bot-2',
+  })
+  assert.deepEqual(parseGrokbotInput('read "Support Bot" 5', targets), {
+    kind: 'read',
+    targetRef: 'bot-2',
+    limit: 5,
+  })
+  assert.deepEqual(parseGrokbotInput('send “Support Bot” 你好', targets), {
+    kind: 'send',
+    targetRef: 'bot-2',
+    message: '你好',
+  })
+})
+
+test('quoted unknown targets stay explicit references so resolution reports them', () => {
+  assert.deepEqual(parseGrokbotInput('send "Nobody" 你好', [secondBot]), {
+    kind: 'send',
+    targetRef: 'Nobody',
+    message: '你好',
+  })
+})
+
 test('the parser accepts a literal message after --', () => {
   assert.deepEqual(parseGrokbotInput('send -- Support Bot 你好', [secondBot]), {
     kind: 'send',
@@ -141,6 +172,39 @@ test('free text asks which bot and sends the text as typed', async () => {
   assert.match(result.text ?? '', /Sent to Support Bot/)
   assert.deepEqual(sent, [{ ref: 'bot-2', message: '方便的话回我一句' }])
   assert.deepEqual(dialogs.calls, ['select'])
+})
+
+test('send with a quoted target sends immediately without dialogs', async () => {
+  const sent: Array<{ ref: string; message: string }> = []
+  const service = fakeService({
+    targets: async () => [record(), secondBot],
+    send: async (ref: string, message: string) => {
+      sent.push({ ref, message })
+      return receipt(secondBot)
+    },
+  })
+  const command = createGrokbotCommand({ service, config, messages })
+  const result = await handlerOf(command)('send "Support Bot" 上线了吗')
+  assert.equal(result.kind, 'success')
+  assert.match(result.text ?? '', /Sent to Support Bot/)
+  assert.deepEqual(sent, [{ ref: 'bot-2', message: '上线了吗' }])
+})
+
+test('an unconfirmed send keeps the explicit unknown warning', async () => {
+  const service = fakeService({
+    targets: async () => [record(), secondBot],
+    send: async () => ({
+      target: secondBot,
+      result: {},
+      delivery: 'unknown',
+      clientNonce: 'nonce-1',
+    }),
+  })
+  const command = createGrokbotCommand({ service, config, messages })
+  const result = await handlerOf(command)('send Support Bot 上线了吗')
+  assert.equal(result.kind, 'success')
+  assert.match(result.text ?? '', /Delivery unknown for Support Bot/)
+  assert.match(result.text ?? '', /before resending/)
 })
 
 test('send <bot> only asks for the message', async () => {

@@ -39,6 +39,7 @@ export interface GrokSendReceipt {
   target: GrokAgentRecord
   result: unknown
   delivery: 'accepted' | 'unknown'
+  /** Gateway message id, or transcript entry id when confirmed there. */
   messageId?: string
   clientNonce: string
 }
@@ -47,6 +48,16 @@ export interface GrokSendReceipt {
 export interface GrokTranscriptTail {
   target: GrokAgentRecord
   transcript: unknown
+}
+
+/** Bounded polling used to reconcile a submission without a gateway receipt. */
+export interface GrokSendConfirmationOptions {
+  /** Transcript reads to attempt. Defaults to 3. */
+  attempts?: number
+  /** Delay between transcript reads in milliseconds. Defaults to 500. */
+  delayMs?: number
+  /** Trailing transcript entries to inspect. Defaults to 100. */
+  limit?: number
 }
 
 /** Options shared by the gateway exchange and method calls. */
@@ -73,6 +84,10 @@ export interface GrokGatewayOptions {
 
 const DEFAULT_TIMEOUT_MS = 30_000
 const DEFAULT_MAX_RESPONSE_BYTES = 2 * 1024 * 1024
+const DEFAULT_CONFIRM_ATTEMPTS = 3
+const DEFAULT_CONFIRM_DELAY_MS = 500
+const DEFAULT_CONFIRM_LIMIT = 100
+const MAX_CONFIRM_ATTEMPTS = 10
 
 function assertGatewayActive(signal: AbortSignal | undefined): void {
   if (signal?.aborted) {
@@ -129,6 +144,50 @@ async function readJson(response: Response, maxBytes: number): Promise<unknown> 
   } catch {
     return { raw: text }
   }
+}
+
+/** Wait between confirmation reads, waking immediately when the caller aborts. */
+function waitForConfirmation(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal?.aborted || ms <= 0) {
+      resolve()
+      return
+    }
+    const done = (): void => {
+      clearTimeout(timer)
+      signal?.removeEventListener('abort', done)
+      resolve()
+    }
+    const timer = setTimeout(done, ms)
+    signal?.addEventListener('abort', done, { once: true })
+  })
+}
+
+/**
+ * Match the client nonce attached to the submission against a user transcript
+ * entry. Grok Bot currently acknowledges sendPrompt with no message id, but the
+ * transcript preserves the nonce and gives the message's entry id.
+ */
+function transcriptReceipt(
+  payload: unknown,
+  clientNonce: string,
+): { matched: boolean; messageId?: string } | undefined {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return undefined
+  const entries = (payload as { entries?: unknown }).entries
+  if (!Array.isArray(entries)) return undefined
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index]
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue
+    const record = entry as Record<string, unknown>
+    if (record.clientNonce !== clientNonce) continue
+    return {
+      matched: true,
+      ...(typeof record.id === 'string' && record.id !== ''
+        ? { messageId: record.id }
+        : {}),
+    }
+  }
+  return undefined
 }
 
 function pick(record: unknown, ...keys: string[]): unknown {
@@ -442,8 +501,10 @@ export class GrokClient {
   }
 
   /**
-   * Submit one message. A confirmed message id means accepted; no message id
-   * means the request may have landed and must be checked with getTranscriptTail.
+   * Submit one message. A gateway message id means accepted. Otherwise the
+   * default confirmation reads the transcript for the submission nonce, because
+   * the gateway currently accepts prompts without returning a message id.
+   * Set `confirmDelivery: false` to return the raw uncertain receipt.
    */
   async sendPrompt(
     ref: string,
@@ -452,6 +513,8 @@ export class GrokClient {
       signal?: AbortSignal
       clientNonce?: string
       replyToId?: string
+      confirmDelivery?: boolean
+      confirmation?: GrokSendConfirmationOptions
     } = {},
   ): Promise<GrokSendReceipt> {
     assertGatewayActive(options.signal)
@@ -481,13 +544,63 @@ export class GrokClient {
     const messageId = data && typeof data === 'object' && !Array.isArray(data)
       ? (data as { messageId?: unknown }).messageId
       : undefined
-    return {
-      target,
-      result: data,
-      delivery: typeof messageId === 'string' ? 'accepted' : 'unknown',
-      ...(typeof messageId === 'string' ? { messageId } : {}),
-      clientNonce,
+    if (typeof messageId === 'string' && messageId !== '') {
+      return { target, result: data, delivery: 'accepted', messageId, clientNonce }
     }
+    if (options.confirmDelivery !== false) {
+      const confirmed = await this.#confirmByNonce(
+        target.id,
+        clientNonce,
+        options.signal,
+        options.confirmation,
+      )
+      if (confirmed.matched) {
+        return {
+          target,
+          result: data,
+          delivery: 'accepted',
+          ...(confirmed.messageId === undefined ? {} : { messageId: confirmed.messageId }),
+          clientNonce,
+        }
+      }
+    }
+    return { target, result: data, delivery: 'unknown', clientNonce }
+  }
+
+  /**
+   * Look for the submission nonce in the latest bounded transcript tail.
+   * Confirmation failures stay uncertain; they never turn a transmitted prompt
+   * into a thrown error that could tempt the caller to resend.
+   */
+  async #confirmByNonce(
+    targetId: string,
+    clientNonce: string,
+    signal: AbortSignal | undefined,
+    options: GrokSendConfirmationOptions | undefined,
+  ): Promise<{ matched: boolean; messageId?: string }> {
+    const attempts = Math.min(
+      Math.max(Math.trunc(options?.attempts ?? DEFAULT_CONFIRM_ATTEMPTS) || DEFAULT_CONFIRM_ATTEMPTS, 1),
+      MAX_CONFIRM_ATTEMPTS,
+    )
+    const delayMs = Math.min(Math.max(Math.trunc(options?.delayMs ?? DEFAULT_CONFIRM_DELAY_MS) || 0, 0), 10_000)
+    const limit = Math.min(Math.max(Math.trunc(options?.limit ?? DEFAULT_CONFIRM_LIMIT) || DEFAULT_CONFIRM_LIMIT, 1), 200)
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      if (attempt > 0) await waitForConfirmation(delayMs, signal)
+      if (signal?.aborted) return { matched: false }
+      let transcript: unknown
+      try {
+        transcript = await this.#call(
+          'getAgentTranscriptTail',
+          { id: targetId, limit },
+          signal,
+        )
+      } catch {
+        continue
+      }
+      const match = transcriptReceipt(transcript, clientNonce)
+      if (match !== undefined) return match
+    }
+    return { matched: false }
   }
 
   /** Read the latest bounded transcript tail for a bot or group. */

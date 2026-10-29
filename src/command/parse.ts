@@ -24,6 +24,14 @@ export type GrokbotIntent =
 
 const SHAPE_WORDS = new Set(['list', 'read', 'send'])
 
+/** Quote characters accepted around a target name. */
+const TARGET_QUOTES: Readonly<Record<string, string>> = {
+  '"': '"',
+  "'": "'",
+  '“': '”',
+  '‘': '’',
+}
+
 /** Largest tail the gateway accepts for one read. */
 export const MAX_READ_LIMIT = 200
 
@@ -51,25 +59,25 @@ function parseSend(rest: string, targets: readonly GrokTargetRef[]): GrokbotInte
     const literal = rest.slice(2).trim()
     return literal === '' ? { kind: 'send' } : { kind: 'send', message: literal }
   }
-  const match = matchTargetPrefix(rest, targets)
+  const match = matchQuotedTargetPrefix(rest, targets) ?? matchTargetPrefix(rest, targets)
   if (match === undefined) return { kind: 'send', message: rest }
   const message = rest.slice(match.length).trim()
   return message === ''
-    ? { kind: 'send', targetRef: match.id }
-    : { kind: 'send', targetRef: match.id, message }
+    ? { kind: 'send', targetRef: match.ref }
+    : { kind: 'send', targetRef: match.ref, message }
 }
 
 function parseRead(rest: string, targets: readonly GrokTargetRef[]): GrokbotIntent {
   if (rest === '') return { kind: 'read' }
   const limitOnly = parseLimit(rest)
   if (limitOnly !== undefined) return { kind: 'read', limit: limitOnly }
-  const match = matchTargetPrefix(rest, targets)
+  const match = matchQuotedTargetPrefix(rest, targets) ?? matchTargetPrefix(rest, targets)
   if (match === undefined) return { kind: 'read', targetRef: rest }
   const tail = rest.slice(match.length).trim()
   const limit = tail === '' ? undefined : parseLimit(tail)
   return limit === undefined
-    ? { kind: 'read', targetRef: match.id }
-    : { kind: 'read', targetRef: match.id, limit }
+    ? { kind: 'read', targetRef: match.ref }
+    : { kind: 'read', targetRef: match.ref, limit }
 }
 
 /**
@@ -79,18 +87,51 @@ function parseRead(rest: string, targets: readonly GrokTargetRef[]): GrokbotInte
 function matchTargetPrefix(
   text: string,
   targets: readonly GrokTargetRef[],
-): { id: string; length: number } | undefined {
+): { ref: string; length: number } | undefined {
   const lower = text.toLowerCase()
-  let best: { id: string; length: number } | undefined
+  let best: { ref: string; length: number } | undefined
   for (const target of targets) {
     for (const candidate of [target.name, target.title, target.id]) {
       const value = candidate.trim().toLowerCase()
       if (value === '' || !lower.startsWith(value)) continue
       if (text.length > value.length && !/^\s/u.test(text.slice(value.length))) continue
-      if (best === undefined || value.length > best.length) best = { id: target.id, length: value.length }
+      if (best === undefined || value.length > best.length) {
+        best = { ref: target.id, length: value.length }
+      }
     }
   }
   return best
+}
+
+/**
+ * A quoted target at the start of the line, e.g. `send "Chief of Staff" hello`.
+ * Quoting is explicit intent, so an unknown quoted value is retained as the
+ * reference and resolved (with a useful gateway error) later. Known values are
+ * replaced by their id; duplicate exact matches stay as text so resolution can
+ * report the ambiguity instead of silently choosing one.
+ */
+function matchQuotedTargetPrefix(
+  text: string,
+  targets: readonly GrokTargetRef[],
+): { ref: string; length: number } | undefined {
+  const opening = text.charAt(0)
+  const closing = TARGET_QUOTES[opening]
+  if (closing === undefined) return undefined
+  const end = text.indexOf(closing, 1)
+  if (end === -1) return undefined
+  const tail = text.slice(end + 1)
+  if (tail !== '' && !/^\s/u.test(tail)) return undefined
+  const quoted = text.slice(1, end).trim()
+  if (quoted === '') return undefined
+  const needle = quoted.toLowerCase()
+  const matches = targets.filter(target =>
+    target.id.toLowerCase() === needle
+    || target.name.toLowerCase() === needle
+    || target.title.toLowerCase() === needle)
+  return {
+    ref: matches.length === 1 ? matches[0]!.id : quoted,
+    length: end + 1,
+  }
 }
 
 /** A positive integer tail size, clamped to the gateway's bound. */

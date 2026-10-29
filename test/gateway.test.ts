@@ -76,15 +76,62 @@ test('sendPrompt resolves the target and reports confirmed delivery', async () =
   const send = calls.find(call => call.url.endsWith('/sendPrompt'))
   assert.equal(send?.body.agentId, 'bot-1')
   assert.equal(send?.body.prompt, 'Please investigate')
+  assert.equal(calls.filter(call => call.url.endsWith('/getAgentTranscriptTail')).length, 0)
 })
 
-test('sendPrompt treats a response without messageId as unknown delivery', async () => {
-  const { fetchImpl } = fakeFetch((url) => {
+test('sendPrompt treats a response without messageId as unknown when confirmation is disabled', async () => {
+  const { fetchImpl, calls } = fakeFetch((url) => {
     if (url.endsWith('/listAgents')) return jsonResponse(roster)
     return jsonResponse({})
   })
   const client = createGrokClient(session, { fetchImpl })
-  const receipt = await client.sendPrompt('Researcher', 'hello')
+  const receipt = await client.sendPrompt('Researcher', 'hello', { confirmDelivery: false })
+  assert.equal(receipt.delivery, 'unknown')
+  assert.equal(receipt.messageId, undefined)
+  assert.equal(calls.filter(call => call.url.endsWith('/getAgentTranscriptTail')).length, 0)
+})
+
+test('sendPrompt confirms delivery from the transcript by client nonce', async () => {
+  let sentNonce = ''
+  let tailReads = 0
+  const { fetchImpl, calls } = fakeFetch((url, body) => {
+    if (url.endsWith('/listAgents')) return jsonResponse(roster)
+    if (url.endsWith('/sendPrompt')) {
+      sentNonce = String(body.clientNonce)
+      return jsonResponse({ accepted: true })
+    }
+    tailReads += 1
+    return tailReads === 1
+      ? jsonResponse({ entries: [{ id: 't0u', kind: 'message', clientNonce: 'someone-else' }] })
+      : jsonResponse({
+          entries: [
+            { id: 't0u', kind: 'message', role: 'user', clientNonce: sentNonce },
+            { id: 't0s0', kind: 'send-message', requestId: 'request-1' },
+          ],
+        })
+  })
+  const client = createGrokClient(session, { fetchImpl })
+  const receipt = await client.sendPrompt('Researcher', 'hello', {
+    confirmation: { attempts: 2, delayMs: 0, limit: 25 },
+  })
+  assert.equal(receipt.delivery, 'accepted')
+  assert.equal(receipt.messageId, 't0u')
+  assert.equal(receipt.clientNonce, sentNonce)
+  const tails = calls.filter(call => call.url.endsWith('/getAgentTranscriptTail'))
+  assert.equal(tails.length, 2)
+  assert.deepEqual(tails[0]?.body, { id: 'bot-1', limit: 25 })
+})
+
+test('sendPrompt stays unknown when the nonce never reaches the transcript', async () => {
+  const { fetchImpl } = fakeFetch((url) => {
+    if (url.endsWith('/listAgents')) return jsonResponse(roster)
+    if (url.endsWith('/sendPrompt')) return jsonResponse({ accepted: true })
+    return jsonResponse({ entries: [{ id: 't0u', kind: 'message', clientNonce: 'someone-else' }] })
+  })
+  const client = createGrokClient(session, { fetchImpl })
+  const receipt = await client.sendPrompt('Researcher', 'hello', {
+    confirmation: { attempts: 1, delayMs: 0 },
+  })
   assert.equal(receipt.delivery, 'unknown')
   assert.equal(receipt.messageId, undefined)
 })

@@ -39,7 +39,7 @@ export interface GrokbotMessages {
   kindLabel(isGroup: boolean, title: string): string
   /** Receipt line for a confirmed submission. */
   sent(target: string, messageId: string | undefined): string
-  /** Receipt line when the gateway did not confirm delivery. */
+  /** Receipt line when neither the gateway nor the transcript confirmed delivery. */
   deliveryUnknown(target: string): string
   threadHeader(target: string, count: number): string
   moreEntries(count: number): string
@@ -66,7 +66,7 @@ const EN: GrokbotMessages = {
   sent: (target, messageId) =>
     `Sent to ${target}${messageId === undefined ? '' : ` (message ${messageId})`}. Read the reply with /grokbot read ${target}.`,
   deliveryUnknown: target =>
-    `Delivery unknown for ${target}. Check the thread with /grokbot read ${target} before resending.`,
+    `Delivery unknown for ${target}: no gateway receipt, and the message was not found in the latest transcript yet. Check with /grokbot read ${target} before resending.`,
   threadHeader: (target, count) => `${target}: ${count} entr${count === 1 ? 'y' : 'ies'}`,
   moreEntries: count => `… ${count} earlier entr${count === 1 ? 'y' : 'ies'} not shown`,
 }
@@ -91,7 +91,7 @@ const ZH: GrokbotMessages = {
   kindLabel: (isGroup, title) => `${isGroup ? '群组' : 'bot'}${title.trim() === '' ? '' : ` · ${title}`}`,
   sent: (target, messageId) =>
     `已投递给 ${target}${messageId === undefined ? '' : `（message ${messageId}）`}。用 /grokbot read ${target} 查看回复。`,
-  deliveryUnknown: target => `无法确认是否已投递给 ${target}。重发前先用 /grokbot read ${target} 检查会话。`,
+  deliveryUnknown: target => `无法确认是否已投递给 ${target}：网关没有回执，最新会话里暂未找到匹配条目。重发前先用 /grokbot read ${target} 检查会话。`,
   threadHeader: (target, count) => `${target}：${count} 条`,
   moreEntries: count => `… 另有 ${count} 条较早内容未显示`,
 }

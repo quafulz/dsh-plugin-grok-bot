@@ -104,15 +104,16 @@ assistant: On it. I'll push the branch and reply with STATUS: done.
 | `/grokbot <消息>` | 把文本当作消息。用你上次的机器人，没有则询问发给谁。 |
 | `/grokbot send <消息>` | 同上，`send` 只是可选的形状词。 |
 | `/grokbot send <机器人>` | 解析出机器人，再询问要发什么。 |
-| `/grokbot send <机器人> <消息>` | 直接发送。 |
+| `/grokbot send <机器人> <消息>` | 直接发送。多词名称可加引号：`send "Chief of Staff" <消息>`。 |
 | `/grokbot send -- <文本>` | 原样发送文本，跳过目标匹配。 |
 | `/grokbot read [机器人] [条数]` | 读取线程尾部。省略机器人时沿用上一次的目标，条数范围 1-200。 |
 
 缺的参数通过宿主自带的弹窗来补，你从列表里选，不用记格式。没有这层能力的环境（比如官方
 DSH 前端或无头嵌入器）仍然支持写全的整行命令，遇到信息不全的输入会回一句用法提示。
 
-目标按名称、标题、id 的长前缀匹配当前名单，所以 `release crew` 这样的多词名字可以直接写在
-`send <机器人> <消息>` 里。如果消息本身就以某个机器人名开头，用 `--` 形式。
+目标按名称、标题、id 的长前缀匹配当前名单，所以 `release crew` 这样的多词名字不加引号也能写。
+引号会把目标定为精确名称：`send "Chief of Staff" <消息>` 不会再把引号里的名字并进消息。引号是
+目标专用语法；如果消息本身就以某个机器人名或引号内容开头，用 `--` 形式。
 
 想把命令和弹窗换成中文，把插件配置里的 `locale` 设为 `zh`。
 
@@ -200,6 +201,9 @@ BLOCKERS: ...
 - Linux：`~/.config/Grok Bot/` 或 `$XDG_CONFIG_HOME/Grok Bot/`
 - Windows：`%APPDATA%\Grok Bot\`
 
+换到的网关会话会缓存在进程内。如果网关返回 `401`、`403` 或 `417`（会话过期），目标列表和线程
+读取会丢弃缓存客户端并用新会话重试一次。发送操作不会自动重试。
+
 无头或远程部署可以显式提供网关：
 
 ```sh
@@ -246,8 +250,10 @@ Cursor API 域名。回环地址网关需要设置 `GROK_BOT_ALLOW_LOCAL_GATEWAY
 | `message` | string | 必填，不能为空。 |
 | `replyTo` | string | 可选，本条消息回复的条目 id。 |
 
-网关确认提交时返回 `delivery: "accepted"` 和 `messageId`。返回 `delivery: "unknown"` 表示请求
-可能已经送达但没有拿到回执。工具不会自动重试。
+`delivery: "accepted"` 表示提交已确认。当前网关发送 prompt 时不返回 message id，所以插件还会
+在最新会话中查找本次提交的唯一 `clientNonce`；从会话确认时会把对应条目作为 `messageId` 返回。
+两种确认都没有结果时返回 `delivery: "unknown"`，表示请求可能已经送达但没有拿到回执。工具不会
+自动重试。
 
 ### `grok_thread`
 

@@ -108,7 +108,7 @@ command to ask you for the rest.
 | `/grokbot <message>` | Treats the text as the message. Uses your last bot, or asks which one. |
 | `/grokbot send <message>` | Same as above. `send` is an optional shape word. |
 | `/grokbot send <bot>` | Resolves the bot and asks what it should receive. |
-| `/grokbot send <bot> <message>` | Sends immediately. |
+| `/grokbot send <bot> <message>` | Sends immediately. Quote a multi-word name: `send "Chief of Staff" <message>`. |
 | `/grokbot send -- <text>` | Sends the literal text, skipping target matching. |
 | `/grokbot read [bot] [limit]` | Reads a thread tail. Reuses your last bot when omitted; `limit` is 1-200. |
 
@@ -117,8 +117,10 @@ instead of memorising a format. A host without that seam (the official DSH front
 headless embedder) still serves fully specified lines and answers a partial line with usage.
 
 Targets are matched against the current roster by longest prefix on name, title, or id, so a
-multi-word name such as `release crew` works in `send <bot> <message>`. If a message itself
-starts with a bot name, use the `--` form.
+multi-word name such as `release crew` also works unquoted. Quotes make the target explicit and
+exact: `send "Chief of Staff" <message>` never folds the quoted name into the message. Quoting is
+reserved for a target; if a message itself starts with a bot name or quoted text, use the `--`
+form.
 
 Set `locale: zh` in the plugin config if you want the command and its dialogs in Chinese.
 
@@ -213,6 +215,10 @@ These files live under:
 - Linux: `~/.config/Grok Bot/` or `$XDG_CONFIG_HOME/Grok Bot/`
 - Windows: `%APPDATA%\Grok Bot\`
 
+The minted gateway session is cached in-process. If the gateway answers `401`, `403`, or `417`
+(an expired session), target and thread reads discard the cached client and retry once with a
+fresh session. Sends are never retried automatically.
+
 For headless or remote deployments, pass a gateway explicitly:
 
 ```sh
@@ -264,8 +270,10 @@ return the reply.
 | `message` | string | Required. Must not be empty. |
 | `replyTo` | string | Optional entry id this message replies to. |
 
-`delivery: "accepted"` comes with a `messageId` when the gateway confirmed the submission.
-`delivery: "unknown"` means the request may have landed without a receipt. The tool never
+`delivery: "accepted"` means the submission was confirmed. The gateway currently does not
+return a message id for prompts, so the plugin also checks the latest transcript for the unique
+`clientNonce`; a confirmed receipt carries that transcript entry as `messageId`. If neither check
+succeeds, `delivery: "unknown"` means the request may have landed without a receipt. The tool never
 retries on its own.
 
 ### `grok_thread`

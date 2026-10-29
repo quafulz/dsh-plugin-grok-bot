@@ -9,7 +9,7 @@ export function registerSendTool(ctx: Context, service: GrokBotService): void {
   ctx.tools.register(defineTool({
     name: 'grok_send',
     description:
-      'Send a message to a Grok Bot bot or group. This is asynchronous: it returns a delivery receipt, not the bot reply. Read replies later with grok_thread. If delivery is unknown, inspect the thread before resending. Never auto-approve Grok approval cards.',
+      'Send a message to a Grok Bot bot or group. This is asynchronous: it returns a delivery receipt, not the bot reply. Delivery is confirmed from the gateway receipt or by finding the submission nonce in the transcript. Read replies later with grok_thread. If delivery is unknown, inspect the thread before resending. Never auto-approve Grok approval cards.',
     parameters: {
       target: {
         type: 'string',
@@ -36,11 +36,11 @@ export function registerSendTool(ctx: Context, service: GrokBotService): void {
             type: 'string',
             required: true,
             enum: ['accepted', 'unknown'],
-            description: 'Accepted means the gateway confirmed a message id; unknown means inspect the thread.',
+            description: 'Accepted means the gateway returned a message id or the submission nonce appeared in the transcript; unknown means inspect the thread.',
           },
           messageId: {
             type: 'string',
-            description: 'Gateway message id when the submission was confirmed.',
+            description: 'Gateway message id, or transcript entry id when confirmation came from the thread.',
           },
           clientNonce: {
             type: 'string',
