@@ -86,6 +86,7 @@ test('send does not blindly retry after a 417, but drops the stale client', asyn
       assert.ok(error instanceof GrokBotError)
       assert.equal(error.status, 417)
       assert.equal(error.delivery, 'rejected')
+      assert.match(error.message, /session expired/)
       return true
     },
   )

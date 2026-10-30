@@ -46,6 +46,8 @@ test('registers the bundled skill as a user-invocable runtime contribution', () 
   assert.equal(skill?.invocation?.modelInvocable, true)
   assert.match(skill?.content ?? '', /grok_targets/)
   assert.match(skill?.content ?? '', /grok_thread/)
+  assert.match(skill?.content ?? '', /every 5 minutes, at most 5 times/)
+  assert.match(skill?.content ?? '', /417 Expectation Failed/)
 })
 
 test('a composition without a skill registry is left untouched', () => {

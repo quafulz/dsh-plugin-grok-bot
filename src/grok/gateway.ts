@@ -156,6 +156,19 @@ async function readJson(response: Response, maxBytes: number): Promise<unknown> 
   }
 }
 
+/**
+ * Explain a status that means the Grok Bot sign-in is stale.
+ *
+ * Read calls already rebuild the session once before such a status reaches the
+ * caller, so the hint tells the model to ask the user to sign in again rather
+ * than retry in a loop.
+ */
+function sessionHint(status: number): string {
+  return status === 401 || status === 403 || status === 417
+    ? ' (Grok Bot session expired; ask the user to open the Grok Bot app and sign in again)'
+    : ''
+}
+
 /** Wait between confirmation reads, waking immediately when the caller aborts. */
 function waitForConfirmation(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
@@ -506,7 +519,7 @@ export class GrokClient {
     if (!response.ok) {
       const detail = pick(data, 'message', 'error') ?? response.statusText
       throw new GrokBotError(
-        `${method} failed: ${response.status} ${redactSecrets(String(detail).slice(0, 300))}`,
+        `${method} failed: ${response.status} ${redactSecrets(String(detail).slice(0, 300))}${sessionHint(response.status)}`,
         {
           status: response.status,
           method,

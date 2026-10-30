@@ -217,7 +217,9 @@ These files live under:
 
 The minted gateway session is cached in-process. If the gateway answers `401`, `403`, or `417`
 (an expired session), target and thread reads discard the cached client and retry once with a
-fresh session. Sends are never retried automatically.
+fresh session. Sends are never retried automatically. When the status still comes back after
+that retry, the error message says the session expired; the bundled skill turns that into a
+request for the user to open Grok Bot and sign in again.
 
 For headless or remote deployments, pass a gateway explicitly:
 

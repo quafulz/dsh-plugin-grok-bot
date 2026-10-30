@@ -22,9 +22,13 @@ reach it.
    cannot tell. `unknown` is not a failure: check the thread before resending.
    Never resend automatically.
 3. **Replies arrive later.** After sending, tell the user the message was
-   accepted and that the reply is asynchronous. Do not poll in a tight loop.
-   Read once with `grok_thread` when the user asks for the answer or after a
-   locally meaningful wait.
+   accepted and that the reply is asynchronous. Then read with `grok_thread`
+   once every 5 minutes, at most 5 times, reusing the same `after` cursor.
+   `entryCount: 0` means the bot is still working, not that the message
+   failed. If the fifth read still returns nothing new (~25 minutes), report
+   how long you waited and what you last saw, and suggest the user open the
+   Grok Bot app to look at the thread directly. Never poll faster than once
+   per minute.
 4. **Read with a cursor when repeating.** Pass the previous `cursor` as `after`
    so a second read returns only new entries. `gapReset: true` means the cursor
    was unknown and the result is a fresh bounded snapshot, not a delta.
@@ -40,6 +44,17 @@ reach it.
    link. Give the user the file name and link. Opening the link performs the
    `readAttachmentChunk` transfer; do not fetch or claim to have opened the
    file yourself.
+
+## Failures
+
+- `listAgents failed: 417 Expectation Failed`, a `401`/`403` on any call, or
+  `NO_AUTH` all mean the Grok Bot sign-in is stale. The plugin has already
+  retried the read once with a fresh session, so retrying the same call again
+  will not help. Tell the user their Grok Bot session has expired, ask them to
+  open the Grok Bot app, check the account and sign in again, and try again
+  only after they confirm.
+- `delivery: unknown` is not an auth failure: read the thread before resending.
+- Any other error: report the message as-is instead of guessing at a cause.
 
 ## Command shortcut
 
